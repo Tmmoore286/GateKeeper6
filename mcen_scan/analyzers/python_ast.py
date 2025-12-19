@@ -12,6 +12,7 @@ from ..rules import rule_info
 
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _BIND_ALL = {"0.0.0.0", "::"}
+_UNKNOWN = "<dynamic>"
 
 
 def _is_loopback_host(host: str) -> bool:
@@ -160,9 +161,9 @@ def analyze_python(*, relpath: str, source: str, profile: Profile, allowlist: Al
   except SyntaxError as e:
     findings.append(
       _make_finding(
-        rule_id="OBF001",
-        severity="info",
-        confidence="low",
+        rule_id="SCAN001",
+        severity="high",
+        confidence="high",
         relpath=relpath,
         line=getattr(e, "lineno", None),
         evidence=f"parse_error: {e.msg}",
@@ -172,11 +173,13 @@ def analyze_python(*, relpath: str, source: str, profile: Profile, allowlist: Al
 
   imports = _build_import_index(tree)
   imported_roots = {m.split(".")[0] for m in imports.name_to_module.values()}
+  scope_envs, parents = _build_scope_envs_and_parents(tree)
 
   for node in ast.walk(tree):
     if isinstance(node, ast.Call):
       raw_name = _extract_call_name(node.func)
       resolved = _resolve_dotted(raw_name, imports)
+      env = _env_for_node(node, scope_envs, parents)
 
       # DEX001
       if isinstance(node.func, ast.Name) and node.func.id in {"eval", "exec", "compile"}:
@@ -285,7 +288,7 @@ def analyze_python(*, relpath: str, source: str, profile: Profile, allowlist: Al
         "os.popen",
         "pty.spawn",
       }:
-        cmd_str = _extract_command_string(node)
+        cmd_str = _extract_command_string(node, env)
         if _has_shell_true(node):
           findings.append(
             _make_finding(
@@ -318,6 +321,8 @@ def analyze_python(*, relpath: str, source: str, profile: Profile, allowlist: Al
         sev: Severity = "high"
         if profile.subprocess_requires_allowlist:
           sev = "blocker"
+        elif cmd_str and _is_local_python_orchestration(cmd_str):
+          sev = "medium"
 
         evidence = f"{resolved}({cmd_str})" if cmd_str else f"{resolved}(...)"
         findings.append(
@@ -488,6 +493,131 @@ def _resolve_dotted(raw_name: str, imports: ImportIndex) -> str:
   return ".".join(parts)
 
 
+def _build_parent_map(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+  parents: dict[ast.AST, ast.AST] = {}
+  for parent in ast.walk(tree):
+    for child in ast.iter_child_nodes(parent):
+      parents[child] = parent
+  return parents
+
+
+def _find_scope(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> ast.AST:
+  cur: ast.AST | None = node
+  while cur is not None:
+    if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+      return cur
+    cur = parents.get(cur)
+  return node
+
+
+def _build_scope_envs_and_parents(tree: ast.AST) -> tuple[dict[ast.AST, dict[str, str]], dict[ast.AST, ast.AST]]:
+  parents = _build_parent_map(tree)
+  scopes: list[ast.AST] = [tree]
+  for n in ast.walk(tree):
+    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+      scopes.append(n)
+
+  envs: dict[ast.AST, dict[str, str]] = {}
+  for s in scopes:
+    body = s.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)) else []
+    envs[s] = _eval_assignments_in_body(body)
+  return envs, parents
+
+
+def _env_for_node(
+  node: ast.AST, scope_envs: dict[ast.AST, dict[str, str]], parents: dict[ast.AST, ast.AST]
+) -> dict[str, str]:
+  scope = _find_scope(node, parents)
+  return scope_envs.get(scope, {})
+
+
+def _eval_assignments_in_body(body: list[ast.stmt]) -> dict[str, str]:
+  env: dict[str, str] = {}
+  for stmt in body:
+    if isinstance(stmt, ast.Assign):
+      if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name):
+        continue
+      name = stmt.targets[0].id
+      val = _eval_value(stmt.value, env)
+      if val is not None:
+        env[name] = val
+    elif isinstance(stmt, ast.AnnAssign):
+      if not isinstance(stmt.target, ast.Name) or stmt.value is None:
+        continue
+      val = _eval_value(stmt.value, env)
+      if val is not None:
+        env[stmt.target.id] = val
+    elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+      # Handle list mutation like: args.append("--flag")
+      call = stmt.value
+      if isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name):
+        var = call.func.value.id
+        meth = call.func.attr
+        if var in env and env[var] != _UNKNOWN and meth in {"append", "extend"}:
+          arg = call.args[0] if call.args else None
+          s = _eval_value(arg, env) if arg is not None else None
+          if s is not None and meth == "append":
+            env[var] = (env[var] + " " + s).strip()
+          elif s is not None and meth == "extend":
+            env[var] = (env[var] + " " + s).strip()
+    elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+      continue
+  return env
+
+
+def _eval_value(node: ast.AST | None, env: dict[str, str]) -> str | None:
+  if node is None:
+    return None
+  s = _const_str(node)
+  if s is not None:
+    return s.strip()
+  if isinstance(node, ast.Name):
+    return env.get(node.id, _UNKNOWN)
+  if isinstance(node, ast.Attribute):
+    base = _extract_call_name(node.value)
+    if isinstance(node.value, ast.Name) and node.value.id == "sys" and node.attr == "executable":
+      return "python"
+    return env.get(_extract_call_name(node), _UNKNOWN) if base else _UNKNOWN
+  if isinstance(node, (ast.List, ast.Tuple)):
+    parts: list[str] = []
+    for elt in node.elts:
+      pv = _eval_value(elt, env)
+      if pv is None:
+        continue
+      parts.append(pv)
+    return " ".join([p for p in parts if p]).strip() or None
+  if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+    left = _eval_value(node.left, env)
+    right = _eval_value(node.right, env)
+    if left is None and right is None:
+      return None
+    if left is None:
+      return right
+    if right is None:
+      return left
+    return (left + " " + right).strip()
+  if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+    # Path join (pathlib style): script_dir / "file.py"
+    right = _const_str(node.right)
+    if right:
+      if "/" in right or "\\" in right:
+        return f"<path>/{right}"
+      return f"<path>/{right}"
+    return _UNKNOWN
+  if isinstance(node, ast.Call):
+    if isinstance(node.func, ast.Name) and node.func.id == "str" and node.args:
+      inner = _eval_value(node.args[0], env)
+      return inner
+    if isinstance(node.func, ast.Attribute) and node.func.attr == "copy" and isinstance(node.func.value, ast.Name):
+      base = env.get(node.func.value.id)
+      return base if base is not None else _UNKNOWN
+    return _UNKNOWN
+  if isinstance(node, ast.IfExp):
+    # Conservative: treat as dynamic.
+    return _UNKNOWN
+  return None
+
+
 def _dedupe(findings: list[Finding]) -> list[Finding]:
   seen: set[tuple] = set()
   out: list[Finding] = []
@@ -515,7 +645,7 @@ def _has_shell_true(call: ast.Call) -> bool:
   return b is True
 
 
-def _extract_command_string(call: ast.Call) -> str | None:
+def _extract_command_string(call: ast.Call, env: dict[str, str]) -> str | None:
   if not call.args:
     return None
   arg0 = call.args[0]
@@ -526,13 +656,31 @@ def _extract_command_string(call: ast.Call) -> str | None:
   if isinstance(arg0, (ast.List, ast.Tuple)):
     parts: list[str] = []
     for elt in arg0.elts:
-      sv = _const_str(elt)
-      if sv is None:
-        return None
-      parts.append(sv)
-    return " ".join(parts).strip()
+      pv = _eval_value(elt, env)
+      if pv is None:
+        continue
+      parts.append(pv)
+    return " ".join([p for p in parts if p]).strip() or None
+
+  if isinstance(arg0, ast.Name):
+    return env.get(arg0.id)
 
   return None
+
+
+def _is_local_python_orchestration(cmd: str) -> bool:
+  # Heuristic to reduce noise in practical mode:
+  # - First token is python (or sys.executable resolved to python)
+  # - Next token looks like a local .py script path (no URL scheme)
+  tokens = re.split(r"\s+", cmd.strip())
+  if len(tokens) < 2:
+    return False
+  if tokens[0].lower() != "python":
+    return False
+  script = tokens[1]
+  if "://" in script:
+    return False
+  return script.endswith(".py") or script.endswith(".py\"") or script.endswith(".py'")
 
 
 _TOOL_TOKENS_BLOCKER = {
@@ -563,7 +711,7 @@ _TOOL_TOKENS_BLOCKER = {
 
 
 def _looks_like_network_or_persist_tooling(cmd: str) -> bool:
-  tokens = re.split(r"\\s+", cmd.strip().lower())
+  tokens = re.split(r"\s+", cmd.strip().lower())
   if not tokens:
     return False
   first = tokens[0].strip('"').strip("'")

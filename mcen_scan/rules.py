@@ -13,6 +13,13 @@ class RuleInfo:
 
 
 RULES: dict[str, RuleInfo] = {
+  "SCAN001": RuleInfo(
+    rule_id="SCAN001",
+    title="Python parse error (scan incomplete)",
+    category="other",
+    why_it_matters="If a file cannot be parsed, the scan cannot assess it for network/persistence/dynamic-exec risks.",
+    remediation="Fix the syntax error and re-run the scan to produce a complete audit.",
+  ),
   "NET001": RuleInfo(
     rule_id="NET001",
     title="Proven non-loopback network communication",
@@ -116,4 +123,3 @@ RULES: dict[str, RuleInfo] = {
 
 def rule_info(rule_id: str) -> RuleInfo:
   return RULES[rule_id]
-

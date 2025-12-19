@@ -23,21 +23,21 @@ def _make(rule_id: str, *, severity: str, confidence: str, relpath: str, line: i
   )
 
 
-_PS_NET = re.compile(r"\\b(Invoke-WebRequest|Invoke-RestMethod|Start-BitsTransfer|Net\\.WebClient|WebClient)\\b", re.I)
-_PS_EXEC = re.compile(r"\\b(Invoke-Expression|IEX)\\b", re.I)
-_PS_PERSIST = re.compile(r"\\b(schtasks|New-ScheduledTask|Register-ScheduledTask|Set-ItemProperty)\\b", re.I)
+_PS_NET = re.compile(r"\b(Invoke-WebRequest|Invoke-RestMethod|Start-BitsTransfer|Net\.WebClient|WebClient)\b", re.I)
+_PS_EXEC = re.compile(r"\b(Invoke-Expression|IEX)\b", re.I)
+_PS_PERSIST = re.compile(r"\b(schtasks|New-ScheduledTask|Register-ScheduledTask|Set-ItemProperty)\b", re.I)
 
-_BAT_NET = re.compile(r"\\b(curl|wget|bitsadmin|certutil)\\b", re.I)
-_BAT_PERSIST = re.compile(r"\\b(schtasks|reg\\s+add|sc\\s+create)\\b", re.I)
+_BAT_NET = re.compile(r"\b(curl|wget|bitsadmin|certutil)\b", re.I)
+_BAT_PERSIST = re.compile(r"\b(schtasks|reg\s+add|sc\s+create)\b", re.I)
 
-_SH_NET = re.compile(r"\\b(curl|wget|nc|netcat|socat|ssh|scp)\\b", re.I)
-_SH_PERSIST = re.compile(r"\\b(crontab|systemctl\\s+enable|launchctl\\s+load)\\b", re.I)
+_SH_NET = re.compile(r"\b(curl|wget|nc|netcat|socat|ssh|scp)\b", re.I)
+_SH_PERSIST = re.compile(r"\b(crontab|systemctl\s+enable|launchctl\s+load)\b", re.I)
 
 _VBS_EXEC = re.compile(r"CreateObject\\(\"WScript\\.Shell\"\\)", re.I)
 _VBS_NET = re.compile(r"(MSXML2\\.XMLHTTP|WinHttp\\.WinHttpRequest|ADODB\\.Stream)", re.I)
 
 
-_URL_RE = re.compile(r"(https?://[^\\s'\"\\)]+)", re.I)
+_URL_RE = re.compile(r"(https?://[^\s'\"\)]+)", re.I)
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 

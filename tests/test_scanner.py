@@ -92,7 +92,30 @@ class ScannerTests(unittest.TestCase):
       self.assertEqual(res.summary.exit_code, 0)
       self.assertEqual(res.summary.decision, "PASS")
 
+  def test_local_python_orchestration_is_medium_in_practical(self) -> None:
+    with tempfile.TemporaryDirectory() as td:
+      root = Path(td)
+      self._write(root, "child.py", "print('ok')\n")
+      self._write(
+        root,
+        "runner.py",
+        "\n".join(
+          [
+            "import subprocess",
+            "import sys",
+            "from pathlib import Path",
+            "script_dir = Path(__file__).resolve().parent",
+            "cmd = [sys.executable, str(script_dir / 'child.py')]",
+            "subprocess.run(cmd, cwd=script_dir)",
+            "",
+          ]
+        ),
+      )
+      res = scan_path(target=root, profile=resolve_profile("mcen_practical"), allowlist=None)
+      # Should not block or require review when clearly orchestrating local Python.
+      self.assertEqual(res.summary.exit_code, 0)
+      self.assertEqual(res.summary.decision, "PASS")
+
 
 if __name__ == "__main__":
   unittest.main()
-
