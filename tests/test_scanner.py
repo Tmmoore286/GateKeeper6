@@ -116,6 +116,17 @@ class ScannerTests(unittest.TestCase):
       self.assertEqual(res.summary.exit_code, 0)
       self.assertEqual(res.summary.decision, "PASS")
 
+  def test_report_includes_bluf_and_completeness(self) -> None:
+    with tempfile.TemporaryDirectory() as td:
+      root = Path(td)
+      self._write(root, "bad.py", "def x(:\n  pass\n")
+      res = scan_path(target=root, profile=resolve_profile("mcen_practical"), allowlist=None)
+      md = res.to_markdown()
+      self.assertIn("## BLUF (Leadership)", md)
+      self.assertIn("## Technical Assessment (ISSO/ISSM/SWE)", md)
+      self.assertIn("Audit completeness:", md)
+      self.assertIn("SCAN001", md)
+
 
 if __name__ == "__main__":
   unittest.main()
