@@ -16,6 +16,7 @@ The default profile is **practical mode**: it **fails only on confirmed disallow
 - Scan a repo/dir: `python3 -m mcen_scan /path/to/repo`
 - Scan current directory: `python3 -m mcen_scan .`
 - Reports written to: `./mcen_audit/report.md` and `./mcen_audit/report.json`
+- Manifest (per-file SHA-256): `./mcen_audit/manifest.json`
 
 ### Profiles
 
@@ -32,6 +33,25 @@ Use this to document and suppress benign `subprocess` review findings (does not 
 - Example file: `docs/allowlist.example.json`
 - Run with allowlist: `python3 -m mcen_scan . --allowlist docs/allowlist.example.json`
 
+## Network assurance (priority workflow)
+
+GateKeeper6 supports two complementary ways to build strong evidence that a repo does not attempt non-loopback network access:
+
+1) **Static network evidence (default)**: detects common network APIs and call sites (`NET*` findings) without executing code.
+2) **Runtime egress harness (optional)**: runs a Python command under an egress-blocking harness that logs and blocks non-loopback connection attempts.
+
+### Runtime egress harness (optional)
+
+This is supplemental, scenario-based evidence: it reflects the specific command/config/inputs you executed.
+
+- Example (run repo entrypoint under harness):
+  - `python3 -m mcen_scan egress --output-dir ./mcen_audit . -- python3 your_entrypoint.py --arg value`
+- Output files:
+  - `mcen_audit/egress_log.jsonl` (events)
+  - `mcen_audit/runtime_egress.json` (summary)
+
+See `docs/RUNTIME_EGRESS_HARNESS.md` for details and limitations.
+
 ## What it scans
 
 Default file types:
@@ -47,6 +67,7 @@ It does **not** import or execute scanned code.
 
 - Specification and rulepack: `docs/MCEN_Python_Safety_Scanner_SPEC.md`
 - Milestones/implementation notes: `docs/IMPLEMENTATION_PLAN.md`
+- Runtime harness usage: `docs/RUNTIME_EGRESS_HARNESS.md`
 
 ## Development
 

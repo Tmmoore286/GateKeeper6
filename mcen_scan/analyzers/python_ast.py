@@ -721,6 +721,8 @@ def _looks_like_network_or_persist_tooling(cmd: str) -> bool:
 
 
 _BASE64_BLOB_RE = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{600,}={0,2}(?![A-Za-z0-9+/=])")
+_BASE64_CALL_RE = re.compile(r"\bbase64\.b64decode\s*\(")
+_ZLIB_CALL_RE = re.compile(r"\bzlib\.decompress\s*\(")
 
 
 def _obfuscation_heuristics(*, relpath: str, source: str) -> list[Finding]:
@@ -736,7 +738,7 @@ def _obfuscation_heuristics(*, relpath: str, source: str) -> list[Finding]:
         evidence="large base64-like blob present",
       )
     )
-  if "zlib.decompress" in source and "base64.b64decode" in source:
+  if _BASE64_CALL_RE.search(source) and _ZLIB_CALL_RE.search(source):
     findings.append(
       _make_finding(
         rule_id="OBF001",

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from mcen_scan.policy import load_allowlist, resolve_profile
 from mcen_scan.scanner import scan_path
+from mcen_scan.egress_runner import run_python_egress_harness
 
 
 class ScannerTests(unittest.TestCase):
@@ -126,6 +127,39 @@ class ScannerTests(unittest.TestCase):
       self.assertIn("## Technical Assessment (ISSO/ISSM/SWE)", md)
       self.assertIn("Audit completeness:", md)
       self.assertIn("SCAN001", md)
+
+  def test_manifest_contains_sha256(self) -> None:
+    with tempfile.TemporaryDirectory() as td:
+      root = Path(td)
+      self._write(root, "a.py", "print('x')\n")
+      res = scan_path(target=root, profile=resolve_profile("mcen_practical"), allowlist=None)
+      manifest = res.to_manifest_json()
+      self.assertIn("scanned_files", manifest)
+      self.assertEqual(len(manifest["scanned_files"]), 1)
+      entry = manifest["scanned_files"][0]
+      self.assertEqual(entry["path"], "a.py")
+      self.assertIn("sha256", entry)
+      self.assertEqual(len(entry["sha256"]), 64)
+
+  def test_runtime_egress_harness_blocks_non_loopback(self) -> None:
+    with tempfile.TemporaryDirectory() as td:
+      root = Path(td)
+      script = root / "net_try.py"
+      script.write_text(
+        "\n".join(
+          [
+            "import socket",
+            "s = socket.socket()",
+            "s.connect(('1.1.1.1', 443))",
+          ]
+        )
+        + "\n",
+        encoding="utf-8",
+      )
+      log_path = root / "egress.jsonl"
+      out = run_python_egress_harness(target=root, cmd=["python3", "net_try.py"], log_path=log_path)
+      self.assertGreaterEqual(out["blocked_attempts"], 1)
+      self.assertTrue(log_path.exists())
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import subprocess
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
 
 from . import __version__
@@ -61,6 +62,7 @@ def scan_path(*, target: Path, profile: Profile, allowlist: Allowlist | None) ->
   skipped_files: list[dict] = []
   findings = []
   third_party_artifacts: list[dict] = []
+  scanned_files: list[dict] = []
   file_counts = Counter([d.kind for d in discovered])
 
   for d in discovered:
@@ -75,6 +77,15 @@ def scan_path(*, target: Path, profile: Profile, allowlist: Allowlist | None) ->
     if err is not None:
       skipped_files.append({"path": d.relpath, "reason": err})
       continue
+
+    scanned_files.append(
+      {
+        "path": d.relpath,
+        "kind": d.kind,
+        "size_bytes": d.path.stat().st_size,
+        "sha256": _sha256_file(d.path),
+      }
+    )
 
     if d.kind == "python":
       findings.extend(analyze_python(relpath=d.relpath, source=text or "", profile=profile, allowlist=allowlist))
@@ -124,6 +135,7 @@ def scan_path(*, target: Path, profile: Profile, allowlist: Allowlist | None) ->
 
   inventory = Inventory(
     file_counts_by_type=dict(file_counts),
+    scanned_files=sorted(scanned_files, key=lambda x: x.get("path", "")),
     skipped_files=sorted(skipped_files, key=lambda x: x.get("path", "")),
     third_party_artifacts=sorted(third_party_artifacts, key=lambda x: x.get("path", "")),
   )
@@ -138,3 +150,11 @@ def scan_path(*, target: Path, profile: Profile, allowlist: Allowlist | None) ->
     findings=findings,
     inventory=inventory,
   )
+
+
+def _sha256_file(path: Path) -> str:
+  h = hashlib.sha256()
+  with path.open("rb") as f:
+    for chunk in iter(lambda: f.read(1024 * 1024), b""):
+      h.update(chunk)
+  return h.hexdigest()

@@ -63,6 +63,7 @@ class Summary:
 @dataclass(frozen=True)
 class Inventory:
   file_counts_by_type: dict[str, int]
+  scanned_files: list[dict[str, Any]]
   skipped_files: list[dict[str, Any]]
   third_party_artifacts: list[dict[str, Any]]
 
@@ -89,7 +90,17 @@ class ScanResult:
       "inventory": self.inventory.to_json(),
     }
 
-  def to_markdown(self) -> str:
+  def to_manifest_json(self) -> dict[str, Any]:
+    return {
+      "tool": self.tool,
+      "target": self.target,
+      "generated_at": self.run.finished_at,
+      "scanned_files": self.inventory.scanned_files,
+      "skipped_files": self.inventory.skipped_files,
+      "artifacts": self.inventory.third_party_artifacts,
+    }
+
+  def to_markdown(self, *, runtime_egress: dict | None = None) -> str:
     decision_meaning = {
       "PASS": "No disallowed behaviors were detected by this static scan.",
       "CONDITIONAL_PASS": "No confirmed disallowed behaviors were detected, but items require human review.",
@@ -142,6 +153,7 @@ class ScanResult:
     if git.get("is_repo"):
       lines.append(f"- Git commit: `{git.get('head_commit') or 'unknown'}` (dirty={git.get('dirty')})")
     lines.append(f"- Scan window (UTC): `{self.run.started_at}` → `{self.run.finished_at}`")
+    lines.append(f"- Manifest: `manifest.json` (per-file SHA-256 for scanned files)")
     lines.append("")
 
     lines.append("### What this scanner checks (and why it reduces MCEN risk)")
@@ -170,6 +182,28 @@ class ScanResult:
       "should be fixed and re-scanned before treating the audit as complete."
     )
     lines.append("")
+
+    lines.append("### Network assurance evidence (static)")
+    lines.append("")
+    net_blockers = [f for f in self.findings if f.rule_id in {"NET001", "NET003"}]
+    net_reviews = [f for f in self.findings if f.rule_id == "NET002"]
+    lines.append(f"- Proven non-loopback network: {len(net_blockers)} finding(s) (`NET001`/`NET003`)")
+    lines.append(f"- Potential network capability (review): {len(net_reviews)} finding(s) (`NET002`)")
+    if not net_blockers and not net_reviews:
+      lines.append("- Evidence: no network-related findings were detected by static analysis.")
+    else:
+      lines.append("- Evidence: review the `NET*` findings in the Findings section and confirm intended behavior.")
+    lines.append("")
+
+    if runtime_egress is not None:
+      lines.append("### Network assurance evidence (runtime egress harness)")
+      lines.append("")
+      lines.append(f"- Command: `{ ' '.join(runtime_egress.get('command', [])) }`")
+      lines.append(f"- Blocked non-loopback attempts: {runtime_egress.get('blocked_attempts')}")
+      lines.append(f"- Allowed loopback attempts: {runtime_egress.get('allowed_loopback_attempts')}")
+      lines.append(f"- Runtime exit code: {runtime_egress.get('exit_code')}")
+      lines.append("- Evidence files: `runtime_egress.json` and `egress_log.jsonl`")
+      lines.append("")
 
     lines.append("### How to interpret the decision")
     lines.append("")
