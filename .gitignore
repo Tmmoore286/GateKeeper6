@@ -1,0 +1,28 @@
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+Thumbs.db
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Environment files (keep examples)
+.env
+.env.*
+!.env.example
+
+# Build / output (common)
+dist/
+build/
+out/
+coverage/
+
