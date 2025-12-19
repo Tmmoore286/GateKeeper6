@@ -1,0 +1,12 @@
+{
+  "entries": [
+    {
+      "path_glob": "**/*.py",
+      "command_exact": "echo hi",
+      "justification": "Local-only harmless command for operator feedback.",
+      "approved_by": "Your Name",
+      "approved_on": "YYYY-MM-DD"
+    }
+  ]
+}
+

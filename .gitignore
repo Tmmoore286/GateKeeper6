@@ -26,3 +26,5 @@ build/
 out/
 coverage/
 
+# Scanner output
+mcen_audit/
